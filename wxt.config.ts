@@ -6,7 +6,8 @@ export default defineConfig({
   manifest: {
     name: 'Calendar Presets',
     version: '0.1.0',
-    description: 'Google Calendar preset extension',
+    description:
+      'Googleカレンダーの表示メンバー構成をプリセットとして保存し、簡単に切り替えられる社内向けChrome拡張機能です。',
     action: {
       default_title: 'Calendar Presets',
     },
