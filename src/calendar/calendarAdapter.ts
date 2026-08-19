@@ -14,6 +14,9 @@ const CALENDAR_TOGGLE_SELECTOR = [
 
 const IDENTIFIER_ATTRIBUTES = ['data-id', 'data-calendar-id'] as const;
 const MAX_ANCESTOR_DEPTH = 8;
+const DOM_STABILITY_POLL_INTERVAL_MS = 150;
+const DOM_STABILITY_MAX_ATTEMPTS = 10;
+const REQUIRED_STABLE_SNAPSHOTS = 3;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 
 type CalendarIdentityElement = {
@@ -42,11 +45,11 @@ function normalizeText(value: string | null): string | null {
 }
 
 function findIdentityElement(toggle: HTMLElement): CalendarIdentityElement | null {
-  let current: HTMLElement | null = toggle;
-  let depth = 0;
+  for (const attribute of IDENTIFIER_ATTRIBUTES) {
+    let current: HTMLElement | null = toggle;
+    let depth = 0;
 
-  while (current && current !== document.body && depth <= MAX_ANCESTOR_DEPTH) {
-    for (const attribute of IDENTIFIER_ATTRIBUTES) {
+    while (current && current !== document.body && depth <= MAX_ANCESTOR_DEPTH) {
       const value = normalizeText(current.getAttribute(attribute));
 
       if (value) {
@@ -55,10 +58,10 @@ function findIdentityElement(toggle: HTMLElement): CalendarIdentityElement | nul
           identifier: { attribute, value },
         };
       }
-    }
 
-    current = current.parentElement;
-    depth += 1;
+      current = current.parentElement;
+      depth += 1;
+    }
   }
 
   return null;
@@ -129,7 +132,7 @@ function readCalendarEntries(): {
 
     const identity = findIdentityElement(toggle);
     if (identity) {
-      const identityKey = `${identity.identifier.attribute}:${identity.identifier.value}`;
+      const identityKey = identity.identifier.value;
       if (seenIdentifiers.has(identityKey)) continue;
       seenIdentifiers.add(identityKey);
     }
@@ -172,28 +175,98 @@ export function getCalendarsFromDom(): CalendarDomResult {
   };
 }
 
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function getCalendarSnapshotSignature(result: CalendarDomResult): string {
+  return result.calendars
+    .map((calendar) => {
+      const identifier = calendar.identifier
+        ? `${calendar.identifier.attribute}:${calendar.identifier.value}`
+        : `name:${calendar.name}`;
+      return `${identifier}:${calendar.isVisible}`;
+    })
+    .sort()
+    .join('|');
+}
+
+function containsExpectedCalendarIds(
+  result: CalendarDomResult,
+  expectedCalendarIds: string[],
+): boolean {
+  const availableCalendarIds = new Set(
+    result.calendars.flatMap((calendar) =>
+      calendar.identifier ? [calendar.identifier.value] : [],
+    ),
+  );
+
+  return expectedCalendarIds.every((calendarId) =>
+    availableCalendarIds.has(calendarId),
+  );
+}
+
+/** Waits until consecutive reads return the same sidebar state. */
+export async function getStableCalendarsFromDom(
+  expectedCalendarIds: string[] = [],
+): Promise<CalendarDomResult> {
+  let latestResult = getCalendarsFromDom();
+  let latestSignature = getCalendarSnapshotSignature(latestResult);
+  let stableSnapshotCount = 1;
+
+  for (let attempt = 1; attempt < DOM_STABILITY_MAX_ATTEMPTS; attempt += 1) {
+    await wait(DOM_STABILITY_POLL_INTERVAL_MS);
+
+    const nextResult = getCalendarsFromDom();
+    const nextSignature = getCalendarSnapshotSignature(nextResult);
+    stableSnapshotCount =
+      nextSignature === latestSignature ? stableSnapshotCount + 1 : 1;
+    latestResult = nextResult;
+    latestSignature = nextSignature;
+
+    if (
+      stableSnapshotCount >= REQUIRED_STABLE_SNAPSHOTS &&
+      containsExpectedCalendarIds(latestResult, expectedCalendarIds)
+    ) {
+      return latestResult;
+    }
+  }
+
+  return latestResult;
+}
+
 /** Applies a preset by clicking only calendars whose current state differs. */
-export function applyCalendarPresetToDom(
+export async function applyCalendarPresetToDom(
   calendarIds: string[],
-): ApplyCalendarPresetResult {
+): Promise<ApplyCalendarPresetResult> {
   const targetCalendarIds = new Set(calendarIds);
+  await getStableCalendarsFromDom(calendarIds);
   const { entries } = readCalendarEntries();
-  const availableCalendarIds = new Set<string>();
+  const availableCalendarIds = new Set(
+    entries.flatMap(({ calendar }) =>
+      calendar.identifier ? [calendar.identifier.value] : [],
+    ),
+  );
+  const calendarIdsToProcess = [...availableCalendarIds];
+  const availableTargetCalendarIds = calendarIds.filter((calendarId) =>
+    availableCalendarIds.has(calendarId),
+  );
   let changedCalendarCount = 0;
 
-  for (const { calendar, toggle } of entries) {
-    if (calendar.identifier?.attribute !== 'data-id') continue;
-
-    const calendarId = calendar.identifier.value;
-    availableCalendarIds.add(calendarId);
+  for (const calendarId of calendarIdsToProcess) {
+    const currentEntry = readCalendarEntries().entries.find(
+      ({ calendar }) => calendar.identifier?.value === calendarId,
+    );
+    if (!currentEntry) continue;
 
     const shouldBeVisible =
-      calendar.isSelf === true || targetCalendarIds.has(calendarId);
+      currentEntry.calendar.isSelf === true || targetCalendarIds.has(calendarId);
 
-    if (calendar.isVisible === shouldBeVisible) continue;
+    if (currentEntry.calendar.isVisible === shouldBeVisible) continue;
 
-    toggle.click();
+    currentEntry.toggle.click();
     changedCalendarCount += 1;
+    await getStableCalendarsFromDom(availableTargetCalendarIds);
   }
 
   return {

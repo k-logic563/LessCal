@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import {
   applyCalendarPresetToDom,
-  getCalendarsFromDom,
+  getStableCalendarsFromDom,
 } from '../calendar/calendarAdapter';
 import {
   isApplyCalendarPresetMessage,
@@ -16,7 +16,9 @@ export default defineContentScript({
       async (message: unknown): Promise<CalendarMessageResponse | undefined> => {
         if (isGetCalendarsMessage(message)) {
           try {
-            const result = getCalendarsFromDom();
+            const result = await getStableCalendarsFromDom(
+              message.expectedCalendarIds,
+            );
             return { ok: true, ...result };
           } catch {
             return {
@@ -28,7 +30,7 @@ export default defineContentScript({
 
         if (isApplyCalendarPresetMessage(message)) {
           try {
-            const result = applyCalendarPresetToDom(message.calendarIds);
+            const result = await applyCalendarPresetToDom(message.calendarIds);
             return { ok: true, ...result };
           } catch {
             return {

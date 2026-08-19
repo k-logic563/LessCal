@@ -11,14 +11,14 @@ export function getComparableCalendarIds(
   const visibleCalendars = calendars.filter(
     (calendar) => calendar.isVisible && calendar.isSelf !== true,
   );
-  const calendarWithoutDataId = visibleCalendars.find(
-    (calendar) => calendar.identifier?.attribute !== 'data-id',
+  const calendarWithoutIdentifier = visibleCalendars.find(
+    (calendar) => calendar.identifier === null,
   );
 
-  if (calendarWithoutDataId) {
+  if (calendarWithoutIdentifier) {
     return {
       ok: false,
-      error: `「${calendarWithoutDataId.name}」のdata-idを取得できません。`,
+      error: `「${calendarWithoutIdentifier.name}」の識別情報を取得できません。`,
     };
   }
 

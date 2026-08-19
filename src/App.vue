@@ -82,7 +82,9 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-async function loadCalendars(): Promise<CalendarDomItem[] | null> {
+async function loadCalendars(
+  expectedCalendarIds: string[] = [],
+): Promise<CalendarDomItem[] | null> {
   isLoadingCalendars.value = true;
   hasLoadedCalendars.value = false;
   calendarError.value = null;
@@ -99,6 +101,7 @@ async function loadCalendars(): Promise<CalendarDomItem[] | null> {
 
     const response = (await browser.tabs.sendMessage(activeTab.id, {
       type: GET_CALENDARS_MESSAGE,
+      expectedCalendarIds,
     })) as GetCalendarsResponse | undefined;
 
     if (!response) {
@@ -215,7 +218,7 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
   managingPresetId.value = preset.id;
 
   try {
-    const currentCalendars = await loadCalendars();
+    const currentCalendars = await loadCalendars(preset.calendarIds);
     if (!currentCalendars || currentCalendars.length === 0) {
       throw new Error('Calendars are unavailable');
     }
@@ -223,6 +226,21 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
     const calendarIdResult = getComparableCalendarIds(currentCalendars);
     if (!calendarIdResult.ok) {
       managementError.value = `${calendarIdResult.error} プリセットを更新できません。`;
+      return;
+    }
+
+    const availableCalendarIds = new Set(
+      currentCalendars.flatMap((calendar) =>
+        calendar.identifier ? [calendar.identifier.value] : [],
+      ),
+    );
+    const unavailablePresetCalendarCount = preset.calendarIds.filter(
+      (calendarId) => !availableCalendarIds.has(calendarId),
+    ).length;
+    if (unavailablePresetCalendarCount > 0) {
+      managementError.value =
+        `カレンダー一覧を完全に取得できませんでした（${unavailablePresetCalendarCount}件不足）。` +
+        ' プリセットを更新せず、時間をおいて再度お試しください。';
       return;
     }
 
