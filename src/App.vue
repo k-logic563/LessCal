@@ -33,7 +33,6 @@ const calendarError = ref<string | null>(null);
 const presetListError = ref<string | null>(null);
 const hasLoadedPresets = ref(false);
 const applyingPresetId = ref<string | null>(null);
-const applyFeedback = ref<string | null>(null);
 const applyError = ref<string | null>(null);
 const activeMenuPresetId = ref<string | null>(null);
 const managingPresetId = ref<string | null>(null);
@@ -41,14 +40,12 @@ const managementMode = ref<'rename' | 'delete' | null>(null);
 const managedPreset = ref<CalendarPreset | null>(null);
 const renameName = ref('');
 const managementError = ref<string | null>(null);
-const managementFeedback = ref<string | null>(null);
 const renameInput = ref<HTMLInputElement | null>(null);
 
 const isSaveFormOpen = ref(false);
 const isSaving = ref(false);
 const presetName = ref('');
 const saveError = ref<string | null>(null);
-const saveSuccess = ref<string | null>(null);
 const calendarSnapshot = ref<CalendarDomItem[]>([]);
 const presetNameInput = ref<HTMLInputElement | null>(null);
 
@@ -82,9 +79,7 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-async function loadCalendars(
-  expectedCalendarIds: string[] = [],
-): Promise<CalendarDomItem[] | null> {
+async function loadCalendars(): Promise<CalendarDomItem[] | null> {
   isLoadingCalendars.value = true;
   hasLoadedCalendars.value = false;
   calendarError.value = null;
@@ -101,7 +96,6 @@ async function loadCalendars(
 
     const response = (await browser.tabs.sendMessage(activeTab.id, {
       type: GET_CALENDARS_MESSAGE,
-      expectedCalendarIds,
     })) as GetCalendarsResponse | undefined;
 
     if (!response) {
@@ -149,7 +143,6 @@ function closeManagementPanel(): void {
 async function openRenameForm(preset: CalendarPreset): Promise<void> {
   activeMenuPresetId.value = null;
   closeSaveForm();
-  managementFeedback.value = null;
   managementError.value = null;
   managedPreset.value = preset;
   renameName.value = preset.name;
@@ -162,7 +155,6 @@ async function openRenameForm(preset: CalendarPreset): Promise<void> {
 function openDeleteConfirmation(preset: CalendarPreset): void {
   activeMenuPresetId.value = null;
   closeSaveForm();
-  managementFeedback.value = null;
   managementError.value = null;
   managedPreset.value = preset;
   managementMode.value = 'delete';
@@ -196,7 +188,6 @@ async function submitRename(): Promise<void> {
     const updatedPreset = await renamePreset(targetPreset.id, normalizedName);
     replacePresetInList(updatedPreset);
     closeManagementPanel();
-    managementFeedback.value = `「${targetPreset.name}」の名前を変更しました。`;
   } catch (error) {
     managementError.value =
       error instanceof PresetValidationError
@@ -213,12 +204,11 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
   activeMenuPresetId.value = null;
   closeSaveForm();
   closeManagementPanel();
-  managementFeedback.value = null;
   managementError.value = null;
   managingPresetId.value = preset.id;
 
   try {
-    const currentCalendars = await loadCalendars(preset.calendarIds);
+    const currentCalendars = await loadCalendars();
     if (!currentCalendars || currentCalendars.length === 0) {
       throw new Error('Calendars are unavailable');
     }
@@ -234,22 +224,26 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
         calendar.identifier ? [calendar.identifier.value] : [],
       ),
     );
-    const unavailablePresetCalendarCount = preset.calendarIds.filter(
+    const unavailableExistingCalendarIds = preset.calendarIds.filter(
       (calendarId) => !availableCalendarIds.has(calendarId),
-    ).length;
-    if (unavailablePresetCalendarCount > 0) {
-      managementError.value =
-        `カレンダー一覧を完全に取得できませんでした（${unavailablePresetCalendarCount}件不足）。` +
-        ' プリセットを更新せず、時間をおいて再度お試しください。';
-      return;
-    }
+    );
+    const safeCalendarIds = [
+      ...new Set([
+        ...calendarIdResult.calendarIds,
+        ...unavailableExistingCalendarIds,
+      ]),
+    ];
 
     const updatedPreset = await updatePresetCalendarIds(
       preset.id,
-      calendarIdResult.calendarIds,
+      safeCalendarIds,
     );
     replacePresetInList(updatedPreset);
-    managementFeedback.value = `「${preset.name}」を現在の表示で更新しました。`;
+    if (unavailableExistingCalendarIds.length > 0) {
+      managementError.value =
+        `一覧で確認できない${unavailableExistingCalendarIds.length}件は、` +
+        '既存の設定を保持しました。';
+    }
   } catch {
     managementError.value =
       '現在の表示で更新できませんでした。Googleカレンダーを再読み込みしてください。';
@@ -271,7 +265,6 @@ async function confirmDelete(): Promise<void> {
       (preset) => preset.id !== targetPreset.id,
     );
     closeManagementPanel();
-    managementFeedback.value = `「${targetPreset.name}」を削除しました。`;
   } catch {
     managementError.value = 'プリセットを削除できませんでした。';
   } finally {
@@ -284,7 +277,6 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
 
   applyingPresetId.value = preset.id;
   activeMenuPresetId.value = null;
-  applyFeedback.value = null;
   applyError.value = null;
 
   try {
@@ -310,10 +302,11 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
       throw new Error(response.error);
     }
 
-    const skippedMessage = response.missingCalendarIds.length
-      ? ` ${response.missingCalendarIds.length}件は現在の一覧にないためスキップしました。`
-      : '';
-    applyFeedback.value = `「${preset.name}」を適用しました（${response.changedCalendarCount}件変更）。${skippedMessage}`;
+    if (response.missingCalendarIds.length > 0) {
+      applyError.value =
+        `${response.missingCalendarIds.length}件は現在の一覧にないため、` +
+        'プリセットを完全に適用できませんでした。';
+    }
 
     await loadCalendars();
   } catch {
@@ -328,7 +321,6 @@ async function openSaveForm(): Promise<void> {
   activeMenuPresetId.value = null;
   closeManagementPanel();
   saveError.value = null;
-  saveSuccess.value = null;
 
   const currentCalendars = await loadCalendars();
   if (!currentCalendars) return;
@@ -355,7 +347,6 @@ function closeSaveForm(): void {
 async function saveCurrentPreset(): Promise<void> {
   const normalizedName = presetName.value.trim();
   saveError.value = null;
-  saveSuccess.value = null;
 
   if (!normalizedName) {
     saveError.value = 'プリセット名を入力してください。';
@@ -382,7 +373,6 @@ async function saveCurrentPreset(): Promise<void> {
     );
     presets.value.push(preset);
     closeSaveForm();
-    saveSuccess.value = `「${preset.name}」を保存しました。`;
   } catch (error) {
     saveError.value =
       error instanceof PresetValidationError
@@ -432,9 +422,6 @@ onMounted(() => {
         @delete="openDeleteConfirmation(preset)"
       />
     </ul>
-    <p v-if="applyFeedback" class="status status--success" role="status">
-      {{ applyFeedback }}
-    </p>
     <p v-if="applyError" class="status status--error" role="alert">
       {{ applyError }}
     </p>
@@ -495,9 +482,6 @@ onMounted(() => {
         </div>
       </div>
     </section>
-    <p v-if="managementFeedback" class="status status--success" role="status">
-      {{ managementFeedback }}
-    </p>
     <p v-if="managementError" class="status status--error" role="alert">
       {{ managementError }}
     </p>
@@ -540,9 +524,6 @@ onMounted(() => {
         <span aria-hidden="true">＋</span>
         現在の表示を保存
       </button>
-      <p v-if="saveSuccess" class="status status--success" role="status">
-        {{ saveSuccess }}
-      </p>
     </div>
   </main>
 </template>
@@ -702,10 +683,6 @@ onMounted(() => {
 .calendar-check__status--error,
 .status--error {
   color: #b3261e;
-}
-
-.status--success {
-  color: #188038;
 }
 
 .calendar-results {

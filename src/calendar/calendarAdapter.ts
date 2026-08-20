@@ -15,8 +15,9 @@ const CALENDAR_TOGGLE_SELECTOR = [
 const IDENTIFIER_ATTRIBUTES = ['data-id', 'data-calendar-id'] as const;
 const MAX_ANCESTOR_DEPTH = 8;
 const DOM_STABILITY_POLL_INTERVAL_MS = 150;
-const DOM_STABILITY_MAX_ATTEMPTS = 10;
+const DOM_STABILITY_MAX_ATTEMPTS = 15;
 const REQUIRED_STABLE_SNAPSHOTS = 3;
+const REQUIRED_SAFE_READ_SNAPSHOTS = 6;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 
 type CalendarIdentityElement = {
@@ -162,6 +163,7 @@ function readCalendarEntries(): {
         ({ calendar }) => calendar.identifier !== null,
       ).length,
       signedInAccountVisible: accountEmail !== null,
+      isStable: false,
     },
   };
 }
@@ -209,6 +211,7 @@ function containsExpectedCalendarIds(
 /** Waits until consecutive reads return the same sidebar state. */
 export async function getStableCalendarsFromDom(
   expectedCalendarIds: string[] = [],
+  requiredStableSnapshots = REQUIRED_STABLE_SNAPSHOTS,
 ): Promise<CalendarDomResult> {
   let latestResult = getCalendarsFromDom();
   let latestSignature = getCalendarSnapshotSignature(latestResult);
@@ -225,14 +228,25 @@ export async function getStableCalendarsFromDom(
     latestSignature = nextSignature;
 
     if (
-      stableSnapshotCount >= REQUIRED_STABLE_SNAPSHOTS &&
+      stableSnapshotCount >= requiredStableSnapshots &&
       containsExpectedCalendarIds(latestResult, expectedCalendarIds)
     ) {
-      return latestResult;
+      return {
+        ...latestResult,
+        diagnostics: {
+          ...latestResult.diagnostics,
+          isStable: true,
+        },
+      };
     }
   }
 
   return latestResult;
+}
+
+/** Uses a longer observation window for snapshots that may be persisted. */
+export function getSafeCalendarSnapshotFromDom(): Promise<CalendarDomResult> {
+  return getStableCalendarsFromDom([], REQUIRED_SAFE_READ_SNAPSHOTS);
 }
 
 /** Applies a preset by clicking only calendars whose current state differs. */

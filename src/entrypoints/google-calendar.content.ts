@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import {
   applyCalendarPresetToDom,
-  getStableCalendarsFromDom,
+  getSafeCalendarSnapshotFromDom,
 } from '../calendar/calendarAdapter';
 import {
   isApplyCalendarPresetMessage,
@@ -16,9 +16,10 @@ export default defineContentScript({
       async (message: unknown): Promise<CalendarMessageResponse | undefined> => {
         if (isGetCalendarsMessage(message)) {
           try {
-            const result = await getStableCalendarsFromDom(
-              message.expectedCalendarIds,
-            );
+            const result = await getSafeCalendarSnapshotFromDom();
+            if (!result.diagnostics.isStable) {
+              throw new Error('Calendar DOM did not stabilize');
+            }
             return { ok: true, ...result };
           } catch {
             return {

@@ -18,11 +18,11 @@ export type CalendarDomDiagnostics = {
   matchedToggleCount: number;
   calendarsWithIdentifier: number;
   signedInAccountVisible: boolean;
+  isStable: boolean;
 };
 
 export type GetCalendarsMessage = {
   type: typeof GET_CALENDARS_MESSAGE;
-  expectedCalendarIds?: string[];
 };
 
 export type ApplyCalendarPresetMessage = {
@@ -63,10 +63,7 @@ export function isGetCalendarsMessage(
     typeof message === 'object' &&
     message !== null &&
     'type' in message &&
-    message.type === GET_CALENDARS_MESSAGE &&
-    (!('expectedCalendarIds' in message) ||
-      (Array.isArray(message.expectedCalendarIds) &&
-        message.expectedCalendarIds.every((id) => typeof id === 'string')))
+    message.type === GET_CALENDARS_MESSAGE
   );
 }
 
