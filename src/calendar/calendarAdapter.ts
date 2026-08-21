@@ -6,13 +6,10 @@ import type {
 
 const CALENDAR_TOGGLE_SELECTOR = [
   'input[type="checkbox"][jsname="YPqjbf"][data-tab-target]',
-  '[data-calendar-id] [role="checkbox"][aria-checked]',
   '[data-id] [role="checkbox"][aria-checked]',
-  '[role="checkbox"][aria-checked][data-calendar-id]',
   '[role="checkbox"][aria-checked][data-id]',
 ].join(',');
 
-const IDENTIFIER_ATTRIBUTES = ['data-id', 'data-calendar-id'] as const;
 const MAX_ANCESTOR_DEPTH = 8;
 const DOM_STABILITY_POLL_INTERVAL_MS = 150;
 const DOM_STABILITY_MAX_ATTEMPTS = 15;
@@ -25,7 +22,7 @@ type CalendarIdentityElement = {
   identifier: CalendarIdentifier;
 };
 
-type CalendarDomEntry = {
+type CurrentCalendarDomEntry = {
   calendar: CalendarDomItem;
   toggle: HTMLElement;
 };
@@ -46,23 +43,21 @@ function normalizeText(value: string | null): string | null {
 }
 
 function findIdentityElement(toggle: HTMLElement): CalendarIdentityElement | null {
-  for (const attribute of IDENTIFIER_ATTRIBUTES) {
-    let current: HTMLElement | null = toggle;
-    let depth = 0;
+  let current: HTMLElement | null = toggle;
+  let depth = 0;
 
-    while (current && current !== document.body && depth <= MAX_ANCESTOR_DEPTH) {
-      const value = normalizeText(current.getAttribute(attribute));
+  while (current && current !== document.body && depth <= MAX_ANCESTOR_DEPTH) {
+    const value = normalizeText(current.getAttribute('data-id'));
 
-      if (value) {
-        return {
-          element: current,
-          identifier: { attribute, value },
-        };
-      }
-
-      current = current.parentElement;
-      depth += 1;
+    if (value) {
+      return {
+        element: current,
+        identifier: { attribute: 'data-id', value },
+      };
     }
+
+    current = current.parentElement;
+    depth += 1;
   }
 
   return null;
@@ -109,14 +104,9 @@ function isMatchingAccount(
   return identifier.value.toLowerCase() === accountEmail ? true : null;
 }
 
-/**
- * Reads Google Calendar's sidebar without changing its DOM.
- *
- * Google Calendar does not publish a stable DOM contract. All selectors that
- * depend on its current markup are intentionally kept in this adapter.
- */
-function readCalendarEntries(): {
-  entries: CalendarDomEntry[];
+/** Low-level fresh DOM query shared by the reader and writer. */
+function queryCurrentCalendarEntries(): {
+  entries: CurrentCalendarDomEntry[];
   diagnostics: CalendarDomDiagnostics;
 } {
   const toggles = Array.from(
@@ -125,7 +115,7 @@ function readCalendarEntries(): {
   const accountEmail = findSignedInAccountEmail();
   const seenIdentifiers = new Set<string>();
   const seenToggles = new Set<HTMLElement>();
-  const entries: CalendarDomEntry[] = [];
+  const entries: CurrentCalendarDomEntry[] = [];
 
   for (const toggle of toggles) {
     if (seenToggles.has(toggle)) continue;
@@ -168,8 +158,12 @@ function readCalendarEntries(): {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Read-only operations (no click, focus, scrolling, or event dispatch)
+// ---------------------------------------------------------------------------
+
 export function getCalendarsFromDom(): CalendarDomResult {
-  const { entries, diagnostics } = readCalendarEntries();
+  const { entries, diagnostics } = queryCurrentCalendarEntries();
 
   return {
     calendars: entries.map(({ calendar }) => calendar),
@@ -249,18 +243,49 @@ export function getSafeCalendarSnapshotFromDom(): Promise<CalendarDomResult> {
   return getStableCalendarsFromDom([], REQUIRED_SAFE_READ_SNAPSHOTS);
 }
 
-/** Applies a preset by clicking only calendars whose current state differs. */
+// ---------------------------------------------------------------------------
+// Write operations
+// ---------------------------------------------------------------------------
+
+/** Finds the current node by data-id. Returned DOM references are not cached. */
+function findCurrentCalendarByDataId(
+  calendarId: string,
+): CurrentCalendarDomEntry | null {
+  return (
+    queryCurrentCalendarEntries().entries.find(
+      ({ calendar }) => calendar.identifier?.value === calendarId,
+    ) ?? null
+  );
+}
+
+/** Takes only immutable IDs from the current DOM; element references do not escape. */
+function readAvailableCalendarIds(): string[] {
+  return queryCurrentCalendarEntries().entries.flatMap(({ calendar }) =>
+    calendar.identifier ? [calendar.identifier.value] : [],
+  );
+}
+
+async function waitForCalendarState(
+  calendarId: string,
+  isVisible: boolean,
+): Promise<void> {
+  for (let attempt = 0; attempt < DOM_STABILITY_MAX_ATTEMPTS; attempt += 1) {
+    await wait(DOM_STABILITY_POLL_INTERVAL_MS);
+    const currentEntry = findCurrentCalendarByDataId(calendarId);
+    if (currentEntry?.calendar.isVisible === isVisible) return;
+  }
+}
+
+/**
+ * Applies a preset. Every write is preceded by a fresh data-id lookup because
+ * Google Calendar can replace or reorder sidebar nodes after each click.
+ */
 export async function applyCalendarPresetToDom(
   calendarIds: string[],
 ): Promise<ApplyCalendarPresetResult> {
   const targetCalendarIds = new Set(calendarIds);
-  await getStableCalendarsFromDom(calendarIds);
-  const { entries } = readCalendarEntries();
-  const availableCalendarIds = new Set(
-    entries.flatMap(({ calendar }) =>
-      calendar.identifier ? [calendar.identifier.value] : [],
-    ),
-  );
+  await getStableCalendarsFromDom();
+  const availableCalendarIds = new Set(readAvailableCalendarIds());
   const calendarIdsToProcess = [...availableCalendarIds];
   const availableTargetCalendarIds = calendarIds.filter((calendarId) =>
     availableCalendarIds.has(calendarId),
@@ -268,9 +293,7 @@ export async function applyCalendarPresetToDom(
   let changedCalendarCount = 0;
 
   for (const calendarId of calendarIdsToProcess) {
-    const currentEntry = readCalendarEntries().entries.find(
-      ({ calendar }) => calendar.identifier?.value === calendarId,
-    );
+    const currentEntry = findCurrentCalendarByDataId(calendarId);
     if (!currentEntry) continue;
 
     const shouldBeVisible =
@@ -280,8 +303,10 @@ export async function applyCalendarPresetToDom(
 
     currentEntry.toggle.click();
     changedCalendarCount += 1;
-    await getStableCalendarsFromDom(availableTargetCalendarIds);
+    await waitForCalendarState(calendarId, shouldBeVisible);
   }
+
+  await getStableCalendarsFromDom(availableTargetCalendarIds);
 
   return {
     changedCalendarCount,

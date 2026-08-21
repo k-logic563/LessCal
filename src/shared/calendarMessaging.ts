@@ -3,7 +3,7 @@ export const APPLY_CALENDAR_PRESET_MESSAGE =
   'calendar-presets:apply-calendar-preset';
 
 export type CalendarIdentifier = {
-  attribute: 'data-calendar-id' | 'data-id';
+  attribute: 'data-id';
   value: string;
 };
 
