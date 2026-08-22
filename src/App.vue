@@ -79,7 +79,9 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-async function loadCalendars(): Promise<CalendarDomItem[] | null> {
+async function loadCalendars(
+  allowScroll = false,
+): Promise<CalendarDomItem[] | null> {
   isLoadingCalendars.value = true;
   hasLoadedCalendars.value = false;
   calendarError.value = null;
@@ -96,6 +98,7 @@ async function loadCalendars(): Promise<CalendarDomItem[] | null> {
 
     const response = (await browser.tabs.sendMessage(activeTab.id, {
       type: GET_CALENDARS_MESSAGE,
+      allowScroll,
     })) as GetCalendarsResponse | undefined;
 
     if (!response) {
@@ -208,7 +211,7 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
   managingPresetId.value = preset.id;
 
   try {
-    const currentCalendars = await loadCalendars();
+    const currentCalendars = await loadCalendars(true);
     if (!currentCalendars || currentCalendars.length === 0) {
       throw new Error('Calendars are unavailable');
     }
@@ -322,7 +325,7 @@ async function openSaveForm(): Promise<void> {
   closeManagementPanel();
   saveError.value = null;
 
-  const currentCalendars = await loadCalendars();
+  const currentCalendars = await loadCalendars(true);
   if (!currentCalendars) return;
   if (currentCalendars.length === 0) {
     calendarError.value =

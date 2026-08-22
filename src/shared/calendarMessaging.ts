@@ -23,6 +23,7 @@ export type CalendarDomDiagnostics = {
 
 export type GetCalendarsMessage = {
   type: typeof GET_CALENDARS_MESSAGE;
+  allowScroll?: boolean;
 };
 
 export type ApplyCalendarPresetMessage = {
@@ -63,7 +64,8 @@ export function isGetCalendarsMessage(
     typeof message === 'object' &&
     message !== null &&
     'type' in message &&
-    message.type === GET_CALENDARS_MESSAGE
+    message.type === GET_CALENDARS_MESSAGE &&
+    (!('allowScroll' in message) || typeof message.allowScroll === 'boolean')
   );
 }
 
