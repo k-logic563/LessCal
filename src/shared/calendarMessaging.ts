@@ -28,6 +28,7 @@ export type GetCalendarsMessage = {
 
 export type ApplyCalendarPresetMessage = {
   type: typeof APPLY_CALENDAR_PRESET_MESSAGE;
+  presetId: string;
   calendarIds: string[];
 };
 
@@ -77,6 +78,8 @@ export function isApplyCalendarPresetMessage(
     message !== null &&
     'type' in message &&
     message.type === APPLY_CALENDAR_PRESET_MESSAGE &&
+    'presetId' in message &&
+    typeof message.presetId === 'string' &&
     'calendarIds' in message &&
     Array.isArray(message.calendarIds) &&
     message.calendarIds.every((id) => typeof id === 'string')

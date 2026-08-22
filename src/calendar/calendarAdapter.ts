@@ -4,7 +4,7 @@ import type {
   CalendarIdentifier,
 } from '../shared/calendarMessaging';
 
-const CALENDAR_TOGGLE_SELECTOR =
+export const CALENDAR_TOGGLE_SELECTOR =
   'input[type="checkbox"][jsname="YPqjbf"][data-tab-target]';
 
 const MAX_ANCESTOR_DEPTH = 8;
@@ -238,27 +238,30 @@ function waitForChangedDomToSettle(
   root: Node,
   previousSignature: string,
   getSignature: () => string,
-): Promise<void> {
+): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     let quietTimerId: number | undefined;
-    const finish = (): void => {
+    const finish = (domUpdated: boolean): void => {
       if (settled) return;
       settled = true;
       observer.disconnect();
       window.clearTimeout(timeoutId);
       if (quietTimerId !== undefined) window.clearTimeout(quietTimerId);
-      resolve();
+      resolve(domUpdated);
     };
     const detectUpdate = (): void => {
       const signature = getSignature();
       if (!signature || signature === previousSignature) return;
 
       if (quietTimerId !== undefined) window.clearTimeout(quietTimerId);
-      quietTimerId = window.setTimeout(finish, 50);
+      quietTimerId = window.setTimeout(() => finish(true), 50);
     };
     const observer = new MutationObserver(detectUpdate);
-    const timeoutId = window.setTimeout(finish, DOM_MUTATION_TIMEOUT_MS);
+    const timeoutId = window.setTimeout(
+      () => finish(false),
+      DOM_MUTATION_TIMEOUT_MS,
+    );
 
     observer.observe(root, {
       attributes: true,
@@ -383,8 +386,8 @@ function getScrollContainerSignature(scrollContainer: HTMLElement): string {
 async function scrollAndWaitForDomUpdate(
   scrollContainer: HTMLElement,
   scrollTop: number,
-): Promise<void> {
-  if (scrollContainer.scrollTop === scrollTop) return;
+): Promise<boolean> {
+  if (scrollContainer.scrollTop === scrollTop) return true;
 
   const previousSignature = getScrollContainerSignature(scrollContainer);
   const domUpdated = waitForChangedDomToSettle(
@@ -394,7 +397,7 @@ async function scrollAndWaitForDomUpdate(
   );
 
   scrollContainer.scrollTop = scrollTop;
-  await domUpdated;
+  return domUpdated;
 }
 
 /**
@@ -433,6 +436,8 @@ async function scanAllCalendarsFromDom(): Promise<CalendarDomScan> {
 
   try {
     for (let attempt = 0; attempt < VIRTUAL_LIST_SCAN_ATTEMPTS; attempt += 1) {
+      let scanNeedsRetry = false;
+
       for (const scrollContainer of scrollContainers) {
         if (!scrollContainer.isConnected) continue;
 
@@ -462,10 +467,16 @@ async function scanAllCalendarsFromDom(): Promise<CalendarDomScan> {
         if (attempt % 2 === 1) scrollOffsets.reverse();
 
         for (const scrollTop of scrollOffsets) {
-          await scrollAndWaitForDomUpdate(scrollContainer, scrollTop);
+          const domUpdated = await scrollAndWaitForDomUpdate(
+            scrollContainer,
+            scrollTop,
+          );
+          scanNeedsRetry ||= !domUpdated;
           collectCurrentEntries();
         }
       }
+
+      if (!scanNeedsRetry) break;
     }
   } finally {
     for (const [scrollContainer, originalScrollTop] of originalScrollTops) {
@@ -611,7 +622,15 @@ export async function applyCalendarPresetToDom(
       });
     }
 
-    const calendarIdsToProcess = [...availableCalendarIds];
+    const calendarIdsToProcess = [...availableCalendarIds].sort(
+      (first, second) => {
+        const firstScrollTop =
+          scan.locationsByCalendarId.get(first)?.scrollTop ?? 0;
+        const secondScrollTop =
+          scan.locationsByCalendarId.get(second)?.scrollTop ?? 0;
+        return firstScrollTop - secondScrollTop;
+      },
+    );
     for (const calendarId of calendarIdsToProcess) {
       const currentEntry = await revealCalendarAtLocation(
         calendarId,

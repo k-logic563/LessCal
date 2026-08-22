@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { browser } from 'wxt/browser';
 import PresetListItem from './components/PresetListItem.vue';
 import {
@@ -11,27 +11,28 @@ import {
   updatePresetCalendarIds,
 } from './services/presetService';
 import {
+  clearSelectedPresetId,
+  getSelectedPresetId,
+  observeSelectedPresetId,
+  setSelectedPresetId,
+} from './services/selectedPresetService';
+import {
   APPLY_CALENDAR_PRESET_MESSAGE,
   GET_CALENDARS_MESSAGE,
   type ApplyCalendarPresetResponse,
-  type CalendarDomDiagnostics,
   type CalendarDomItem,
   type GetCalendarsResponse,
 } from './shared/calendarMessaging';
 import type { CalendarPreset } from './types/calendarPreset';
-import {
-  findMatchingPreset,
-  getComparableCalendarIds,
-} from './utils/presetMatcher';
+import { getComparableCalendarIds } from './utils/presetMatcher';
 
 const presets = ref<CalendarPreset[]>([]);
 const calendars = ref<CalendarDomItem[]>([]);
-const diagnostics = ref<CalendarDomDiagnostics | null>(null);
 const isLoadingCalendars = ref(false);
-const hasLoadedCalendars = ref(false);
-const calendarError = ref<string | null>(null);
 const presetListError = ref<string | null>(null);
 const hasLoadedPresets = ref(false);
+const hasLoadedSelectedPreset = ref(false);
+const selectedPresetId = ref<string | null>(null);
 const applyingPresetId = ref<string | null>(null);
 const applyError = ref<string | null>(null);
 const activeMenuPresetId = ref<string | null>(null);
@@ -49,23 +50,13 @@ const saveError = ref<string | null>(null);
 const calendarSnapshot = ref<CalendarDomItem[]>([]);
 const presetNameInput = ref<HTMLInputElement | null>(null);
 
-const currentCalendarIdResult = computed(() =>
-  hasLoadedCalendars.value ? getComparableCalendarIds(calendars.value) : null,
-);
-const selectedPresetId = computed(() => {
-  if (!hasLoadedPresets.value) return null;
-
-  const result = currentCalendarIdResult.value;
-  if (!result?.ok) return null;
-
-  return findMatchingPreset(presets.value, result.calendarIds)?.id ?? null;
-});
 const isCustomState = computed(
   () =>
     hasLoadedPresets.value &&
-    currentCalendarIdResult.value?.ok === true &&
+    hasLoadedSelectedPreset.value &&
     selectedPresetId.value === null,
 );
+let stopObservingSelectedPreset: (() => void) | null = null;
 
 async function loadPresets(): Promise<void> {
   presetListError.value = null;
@@ -79,12 +70,8 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-async function loadCalendars(
-  allowScroll = false,
-): Promise<CalendarDomItem[] | null> {
+async function loadCalendars(): Promise<CalendarDomItem[] | null> {
   isLoadingCalendars.value = true;
-  hasLoadedCalendars.value = false;
-  calendarError.value = null;
 
   try {
     const [activeTab] = await browser.tabs.query({
@@ -98,7 +85,7 @@ async function loadCalendars(
 
     const response = (await browser.tabs.sendMessage(activeTab.id, {
       type: GET_CALENDARS_MESSAGE,
-      allowScroll,
+      allowScroll: true,
     })) as GetCalendarsResponse | undefined;
 
     if (!response) {
@@ -110,15 +97,9 @@ async function loadCalendars(
     }
 
     calendars.value = response.calendars;
-    diagnostics.value = response.diagnostics;
-    hasLoadedCalendars.value = true;
     return response.calendars;
   } catch {
     calendars.value = [];
-    diagnostics.value = null;
-    hasLoadedCalendars.value = false;
-    calendarError.value =
-      'Googleカレンダーを開き、ページを再読み込みしてから再取得してください。';
     return null;
   } finally {
     isLoadingCalendars.value = false;
@@ -211,7 +192,7 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
   managingPresetId.value = preset.id;
 
   try {
-    const currentCalendars = await loadCalendars(true);
+    const currentCalendars = await loadCalendars();
     if (!currentCalendars || currentCalendars.length === 0) {
       throw new Error('Calendars are unavailable');
     }
@@ -242,6 +223,8 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
       safeCalendarIds,
     );
     replacePresetInList(updatedPreset);
+    await setSelectedPresetId(updatedPreset.id);
+    selectedPresetId.value = updatedPreset.id;
     if (unavailableExistingCalendarIds.length > 0) {
       managementError.value =
         `一覧で確認できない${unavailableExistingCalendarIds.length}件は、` +
@@ -267,6 +250,10 @@ async function confirmDelete(): Promise<void> {
     presets.value = presets.value.filter(
       (preset) => preset.id !== targetPreset.id,
     );
+    if (selectedPresetId.value === targetPreset.id) {
+      await clearSelectedPresetId();
+      selectedPresetId.value = null;
+    }
     closeManagementPanel();
   } catch {
     managementError.value = 'プリセットを削除できませんでした。';
@@ -294,6 +281,7 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
 
     const response = (await browser.tabs.sendMessage(activeTab.id, {
       type: APPLY_CALENDAR_PRESET_MESSAGE,
+      presetId: preset.id,
       calendarIds: preset.calendarIds,
     })) as ApplyCalendarPresetResponse | undefined;
 
@@ -306,12 +294,13 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
     }
 
     if (response.missingCalendarIds.length > 0) {
+      selectedPresetId.value = null;
       applyError.value =
         `${response.missingCalendarIds.length}件は現在の一覧にないため、` +
         'プリセットを完全に適用できませんでした。';
+    } else {
+      selectedPresetId.value = preset.id;
     }
-
-    await loadCalendars();
   } catch {
     applyError.value =
       'プリセットを適用できませんでした。Googleカレンダーを再読み込みしてください。';
@@ -325,11 +314,10 @@ async function openSaveForm(): Promise<void> {
   closeManagementPanel();
   saveError.value = null;
 
-  const currentCalendars = await loadCalendars(true);
+  const currentCalendars = await loadCalendars();
   if (!currentCalendars) return;
   if (currentCalendars.length === 0) {
-    calendarError.value =
-      'カレンダーを取得できないため、プリセットを保存できません。';
+    saveError.value = 'カレンダーを取得できないため、保存できません。';
     return;
   }
 
@@ -375,6 +363,8 @@ async function saveCurrentPreset(): Promise<void> {
       calendarIdResult.calendarIds,
     );
     presets.value.push(preset);
+    await setSelectedPresetId(preset.id);
+    selectedPresetId.value = preset.id;
     closeSaveForm();
   } catch (error) {
     saveError.value =
@@ -386,8 +376,31 @@ async function saveCurrentPreset(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  void Promise.all([loadPresets(), loadCalendars()]);
+onMounted(async () => {
+  stopObservingSelectedPreset = observeSelectedPresetId((presetId) => {
+    selectedPresetId.value = presetId;
+    hasLoadedSelectedPreset.value = true;
+  });
+
+  const [, storedSelectedPresetId] = await Promise.all([
+    loadPresets(),
+    getSelectedPresetId(),
+  ]);
+  selectedPresetId.value = storedSelectedPresetId;
+
+  if (
+    selectedPresetId.value !== null &&
+    !presets.value.some((preset) => preset.id === selectedPresetId.value)
+  ) {
+    await clearSelectedPresetId();
+    selectedPresetId.value = null;
+  }
+
+  hasLoadedSelectedPreset.value = true;
+});
+
+onUnmounted(() => {
+  stopObservingSelectedPreset?.();
 });
 </script>
 
