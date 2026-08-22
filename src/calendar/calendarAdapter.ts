@@ -27,17 +27,6 @@ type CurrentCalendarDomEntry = {
   scrollContainer: HTMLElement | null;
 };
 
-type CalendarDomLocation = {
-  scrollContainer: HTMLElement | null;
-  scrollTop: number;
-};
-
-type CalendarDomScan = {
-  result: CalendarDomResult;
-  locationsByCalendarId: Map<string, CalendarDomLocation>;
-  originalScrollTops: Map<HTMLElement, number>;
-};
-
 export type CalendarDomResult = {
   calendars: CalendarDomItem[];
   diagnostics: CalendarDomDiagnostics;
@@ -342,7 +331,7 @@ export function getSafeCalendarSnapshotFromDom(): Promise<CalendarDomResult> {
 
 /** Explicit user actions may traverse the virtual list for a complete snapshot. */
 export function getCompleteCalendarSnapshotFromDom(): Promise<CalendarDomResult> {
-  return scanAllCalendarsFromDom().then(({ result }) => result);
+  return scanAllCalendarsFromDom();
 }
 
 function getCalendarCollectionKey(calendar: CalendarDomItem): string {
@@ -354,21 +343,12 @@ function getCalendarCollectionKey(calendar: CalendarDomItem): string {
 function addEntriesToScan(
   entries: CurrentCalendarDomEntry[],
   calendarsByKey: Map<string, CalendarDomItem>,
-  locationsByCalendarId: Map<string, CalendarDomLocation>,
   scrollContainers: Set<HTMLElement>,
 ): void {
   for (const entry of entries) {
     calendarsByKey.set(getCalendarCollectionKey(entry.calendar), entry.calendar);
 
     if (entry.scrollContainer) scrollContainers.add(entry.scrollContainer);
-
-    const calendarId = entry.calendar.identifier?.value;
-    if (calendarId && !locationsByCalendarId.has(calendarId)) {
-      locationsByCalendarId.set(calendarId, {
-        scrollContainer: entry.scrollContainer,
-        scrollTop: entry.scrollContainer?.scrollTop ?? 0,
-      });
-    }
   }
 }
 
@@ -404,14 +384,13 @@ async function scrollAndWaitForDomUpdate(
  * Walks each virtualized calendar list and restores the user's scroll position.
  * Google Calendar only mounts the rows around the current scroll position.
  */
-async function scanAllCalendarsFromDom(): Promise<CalendarDomScan> {
+async function scanAllCalendarsFromDom(): Promise<CalendarDomResult> {
   const initialResult = await getStableCalendarsFromDom(
     [],
     REQUIRED_SAFE_READ_SNAPSHOTS,
   );
 
   const calendarsByKey = new Map<string, CalendarDomItem>();
-  const locationsByCalendarId = new Map<string, CalendarDomLocation>();
   const scrollContainers = new Set<HTMLElement>();
   const originalScrollTops = new Map<HTMLElement, number>();
   let matchedToggleCount = 0;
@@ -427,7 +406,6 @@ async function scanAllCalendarsFromDom(): Promise<CalendarDomScan> {
     addEntriesToScan(
       current.entries,
       calendarsByKey,
-      locationsByCalendarId,
       scrollContainers,
     );
   };
@@ -490,19 +468,15 @@ async function scanAllCalendarsFromDom(): Promise<CalendarDomScan> {
   const calendars = [...calendarsByKey.values()];
 
   return {
-    result: {
-      calendars,
-      diagnostics: {
-        matchedToggleCount: Math.max(matchedToggleCount, calendars.length),
-        calendarsWithIdentifier: calendars.filter(
-          (calendar) => calendar.identifier !== null,
-        ).length,
-        signedInAccountVisible,
-        isStable: initialResult.diagnostics.isStable,
-      },
+    calendars,
+    diagnostics: {
+      matchedToggleCount: Math.max(matchedToggleCount, calendars.length),
+      calendarsWithIdentifier: calendars.filter(
+        (calendar) => calendar.identifier !== null,
+      ).length,
+      signedInAccountVisible,
+      isStable: initialResult.diagnostics.isStable,
     },
-    locationsByCalendarId,
-    originalScrollTops,
   };
 }
 
@@ -519,59 +493,6 @@ function findCurrentCalendarByDataId(
       ({ calendar }) => calendar.identifier?.value === calendarId,
     ) ?? null
   );
-}
-
-async function revealCalendarAtLocation(
-  calendarId: string,
-  location: CalendarDomLocation | undefined,
-  scrollContainers: Iterable<HTMLElement>,
-): Promise<CurrentCalendarDomEntry | null> {
-  for (let attempt = 0; attempt < VIRTUAL_LIST_SCAN_ATTEMPTS; attempt += 1) {
-    const currentEntry = findCurrentCalendarByDataId(calendarId);
-    if (currentEntry) return currentEntry;
-
-    if (location?.scrollContainer?.isConnected) {
-      await scrollAndWaitForDomUpdate(
-        location.scrollContainer,
-        location.scrollTop,
-      );
-      const preferredEntry = findCurrentCalendarByDataId(calendarId);
-      if (preferredEntry) return preferredEntry;
-    }
-
-    for (const scrollContainer of scrollContainers) {
-      if (!scrollContainer.isConnected) continue;
-      const maximumScrollTop = Math.max(
-        0,
-        scrollContainer.scrollHeight - scrollContainer.clientHeight,
-      );
-      const scrollStep = Math.max(
-        32,
-        Math.floor(scrollContainer.clientHeight * 0.75),
-      );
-
-      for (
-        let scrollTop = attempt % 2 === 0 ? 0 : maximumScrollTop;
-        attempt % 2 === 0
-          ? scrollTop <= maximumScrollTop
-          : scrollTop >= 0;
-        scrollTop += attempt % 2 === 0 ? scrollStep : -scrollStep
-      ) {
-        await scrollAndWaitForDomUpdate(scrollContainer, scrollTop);
-        const revealedEntry = findCurrentCalendarByDataId(calendarId);
-        if (revealedEntry) return revealedEntry;
-      }
-
-      await scrollAndWaitForDomUpdate(
-        scrollContainer,
-        attempt % 2 === 0 ? maximumScrollTop : 0,
-      );
-      const edgeEntry = findCurrentCalendarByDataId(calendarId);
-      if (edgeEntry) return edgeEntry;
-    }
-  }
-
-  return null;
 }
 
 async function waitForCalendarState(
@@ -592,77 +513,112 @@ export async function applyCalendarPresetToDom(
   calendarIds: string[],
 ): Promise<ApplyCalendarPresetResult> {
   const targetCalendarIds = new Set(calendarIds);
-  const scan = await scanAllCalendarsFromDom();
-  const availableCalendarIds = new Set(
-    scan.result.calendars.flatMap((calendar) =>
-      calendar.identifier ? [calendar.identifier.value] : [],
-    ),
-  );
-  const unresolvedTargetCalendarIds = new Set<string>();
+  await getStableCalendarsFromDom([], REQUIRED_SAFE_READ_SNAPSHOTS);
+
+  const processedCalendarIds = new Set<string>();
+  const scrollContainers = new Set<HTMLElement>();
+  const originalScrollTops = new Map<HTMLElement, number>();
   let changedCalendarCount = 0;
 
-  try {
-    for (const calendarId of targetCalendarIds) {
-      if (availableCalendarIds.has(calendarId)) continue;
+  const processCurrentEntries = async (): Promise<void> => {
+    const currentEntries = queryCurrentCalendarEntries().entries;
+    for (const entry of currentEntries) {
+      if (entry.scrollContainer) scrollContainers.add(entry.scrollContainer);
 
-      const recoveredEntry = await revealCalendarAtLocation(
-        calendarId,
-        undefined,
-        scan.originalScrollTops.keys(),
-      );
-      if (!recoveredEntry) {
-        unresolvedTargetCalendarIds.add(calendarId);
-        continue;
-      }
+      const calendarId = entry.calendar.identifier?.value;
+      if (!calendarId || processedCalendarIds.has(calendarId)) continue;
 
-      availableCalendarIds.add(calendarId);
-      scan.locationsByCalendarId.set(calendarId, {
-        scrollContainer: recoveredEntry.scrollContainer,
-        scrollTop: recoveredEntry.scrollContainer?.scrollTop ?? 0,
-      });
-    }
+      // A virtual row can be replaced between reads, so resolve it again by ID.
+      const currentEntry = findCurrentCalendarByDataId(calendarId);
+      if (!currentEntry) continue;
 
-    const calendarIdsToProcess = [...availableCalendarIds].sort(
-      (first, second) => {
-        const firstScrollTop =
-          scan.locationsByCalendarId.get(first)?.scrollTop ?? 0;
-        const secondScrollTop =
-          scan.locationsByCalendarId.get(second)?.scrollTop ?? 0;
-        return firstScrollTop - secondScrollTop;
-      },
-    );
-    for (const calendarId of calendarIdsToProcess) {
-      const currentEntry = await revealCalendarAtLocation(
-        calendarId,
-        scan.locationsByCalendarId.get(calendarId),
-        scan.originalScrollTops.keys(),
-      );
-      if (!currentEntry) {
-        if (targetCalendarIds.has(calendarId)) {
-          unresolvedTargetCalendarIds.add(calendarId);
-          continue;
-        }
-        throw new Error(`Calendar could not be revisited: ${calendarId}`);
-      }
-
+      processedCalendarIds.add(calendarId);
       const shouldBeVisible =
         currentEntry.calendar.isSelf === true ||
         targetCalendarIds.has(calendarId);
-
       if (currentEntry.calendar.isVisible === shouldBeVisible) continue;
 
+      const scrollContainer = currentEntry.scrollContainer;
+      const scrollTopBeforeClick = scrollContainer?.scrollTop;
       currentEntry.toggle.click();
       changedCalendarCount += 1;
-      const stateChanged = await waitForCalendarState(
+
+      const restoreUnexpectedClickScroll = async (): Promise<void> => {
+        if (
+          scrollContainer?.isConnected &&
+          scrollTopBeforeClick !== undefined &&
+          scrollContainer.scrollTop !== scrollTopBeforeClick
+        ) {
+          await scrollAndWaitForDomUpdate(
+            scrollContainer,
+            scrollTopBeforeClick,
+          );
+        }
+      };
+
+      await restoreUnexpectedClickScroll();
+      let stateChanged = await waitForCalendarState(
         calendarId,
         shouldBeVisible,
       );
       if (!stateChanged) {
+        await restoreUnexpectedClickScroll();
+        stateChanged = await waitForCalendarState(calendarId, shouldBeVisible);
+      }
+      if (!stateChanged) {
         throw new Error(`Calendar state did not change: ${calendarId}`);
       }
     }
+  };
+
+  await processCurrentEntries();
+
+  try {
+    for (let attempt = 0; attempt < VIRTUAL_LIST_SCAN_ATTEMPTS; attempt += 1) {
+      let scanNeedsRetry = false;
+
+      for (const scrollContainer of scrollContainers) {
+        if (!scrollContainer.isConnected) continue;
+        if (!originalScrollTops.has(scrollContainer)) {
+          originalScrollTops.set(scrollContainer, scrollContainer.scrollTop);
+        }
+
+        const maximumScrollTop = Math.max(
+          0,
+          scrollContainer.scrollHeight - scrollContainer.clientHeight,
+        );
+        const scrollStep = Math.max(
+          32,
+          Math.floor(scrollContainer.clientHeight * 0.75),
+        );
+        const scrollOffsets: number[] = [];
+        for (
+          let scrollTop = 0;
+          scrollTop < maximumScrollTop;
+          scrollTop += scrollStep
+        ) {
+          scrollOffsets.push(scrollTop);
+        }
+        scrollOffsets.push(maximumScrollTop);
+        if (attempt % 2 === 1) scrollOffsets.reverse();
+
+        for (const scrollTop of scrollOffsets) {
+          const domUpdated = await scrollAndWaitForDomUpdate(
+            scrollContainer,
+            scrollTop,
+          );
+          scanNeedsRetry ||= !domUpdated;
+          await processCurrentEntries();
+        }
+      }
+
+      const allTargetsFound = [...targetCalendarIds].every((calendarId) =>
+        processedCalendarIds.has(calendarId),
+      );
+      if (!scanNeedsRetry && allTargetsFound) break;
+    }
   } finally {
-    for (const [scrollContainer, originalScrollTop] of scan.originalScrollTops) {
+    for (const [scrollContainer, originalScrollTop] of originalScrollTops) {
       if (scrollContainer.isConnected) {
         await scrollAndWaitForDomUpdate(scrollContainer, originalScrollTop);
       }
@@ -671,6 +627,8 @@ export async function applyCalendarPresetToDom(
 
   return {
     changedCalendarCount,
-    missingCalendarIds: [...unresolvedTargetCalendarIds],
+    missingCalendarIds: [...targetCalendarIds].filter(
+      (calendarId) => !processedCalendarIds.has(calendarId),
+    ),
   };
 }

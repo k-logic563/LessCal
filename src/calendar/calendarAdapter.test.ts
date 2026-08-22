@@ -44,6 +44,7 @@ function renderCalendars(
 function renderVirtualizedCalendars(
   calendars: CalendarState[],
   renderDelayMs = 0,
+  scrollOnClick = false,
 ): HTMLElement {
   const viewport = document.createElement('div');
   const rowHeight = 32;
@@ -98,7 +99,11 @@ function renderVirtualizedCalendars(
       toggle.checked = calendar.isVisible;
       toggle.addEventListener('click', () => {
         calendar.isVisible = toggle.checked;
-        renderVisibleRows();
+        if (scrollOnClick) {
+          viewport.scrollTop = 0;
+        } else {
+          renderVisibleRows();
+        }
       });
 
       row.append(toggle);
@@ -237,7 +242,7 @@ describe('calendarAdapter', () => {
       isVisible: false,
     }));
     const targetIds = calendars.slice(10, 15).map(({ id }) => id);
-    renderVirtualizedCalendars(calendars, 100);
+    renderVirtualizedCalendars(calendars, 100, true);
 
     const applyPromise = applyCalendarPresetToDom(targetIds);
     await vi.runAllTimersAsync();

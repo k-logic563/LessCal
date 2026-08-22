@@ -27,7 +27,6 @@ import type { CalendarPreset } from './types/calendarPreset';
 import { getComparableCalendarIds } from './utils/presetMatcher';
 
 const presets = ref<CalendarPreset[]>([]);
-const calendars = ref<CalendarDomItem[]>([]);
 const isLoadingCalendars = ref(false);
 const presetListError = ref<string | null>(null);
 const hasLoadedPresets = ref(false);
@@ -47,7 +46,7 @@ const isSaveFormOpen = ref(false);
 const isSaving = ref(false);
 const presetName = ref('');
 const saveError = ref<string | null>(null);
-const calendarSnapshot = ref<CalendarDomItem[]>([]);
+const calendarIdSnapshot = ref<string[] | null>(null);
 const presetNameInput = ref<HTMLInputElement | null>(null);
 
 const isCustomState = computed(
@@ -96,10 +95,8 @@ async function loadCalendars(): Promise<CalendarDomItem[] | null> {
       throw new Error(response.error);
     }
 
-    calendars.value = response.calendars;
     return response.calendars;
   } catch {
-    calendars.value = [];
     return null;
   } finally {
     isLoadingCalendars.value = false;
@@ -110,6 +107,15 @@ function replacePresetInList(updatedPreset: CalendarPreset): void {
   presets.value = presets.value.map((preset) =>
     preset.id === updatedPreset.id ? updatedPreset : preset,
   );
+}
+
+function getKnownSelectedCalendarIds(): string[] | null {
+  if (!selectedPresetId.value) return null;
+
+  const selectedPreset = presets.value.find(
+    (preset) => preset.id === selectedPresetId.value,
+  );
+  return selectedPreset ? [...selectedPreset.calendarIds] : null;
 }
 
 function togglePresetMenu(presetId: string): void {
@@ -192,31 +198,37 @@ async function updatePresetFromCurrent(preset: CalendarPreset): Promise<void> {
   managingPresetId.value = preset.id;
 
   try {
-    const currentCalendars = await loadCalendars();
-    if (!currentCalendars || currentCalendars.length === 0) {
-      throw new Error('Calendars are unavailable');
-    }
+    const knownCalendarIds = getKnownSelectedCalendarIds();
+    let safeCalendarIds = knownCalendarIds;
+    let unavailableExistingCalendarIds: string[] = [];
 
-    const calendarIdResult = getComparableCalendarIds(currentCalendars);
-    if (!calendarIdResult.ok) {
-      managementError.value = `${calendarIdResult.error} プリセットを更新できません。`;
-      return;
-    }
+    if (!safeCalendarIds) {
+      const currentCalendars = await loadCalendars();
+      if (!currentCalendars || currentCalendars.length === 0) {
+        throw new Error('Calendars are unavailable');
+      }
 
-    const availableCalendarIds = new Set(
-      currentCalendars.flatMap((calendar) =>
-        calendar.identifier ? [calendar.identifier.value] : [],
-      ),
-    );
-    const unavailableExistingCalendarIds = preset.calendarIds.filter(
-      (calendarId) => !availableCalendarIds.has(calendarId),
-    );
-    const safeCalendarIds = [
-      ...new Set([
-        ...calendarIdResult.calendarIds,
-        ...unavailableExistingCalendarIds,
-      ]),
-    ];
+      const calendarIdResult = getComparableCalendarIds(currentCalendars);
+      if (!calendarIdResult.ok) {
+        managementError.value = `${calendarIdResult.error} プリセットを更新できません。`;
+        return;
+      }
+
+      const availableCalendarIds = new Set(
+        currentCalendars.flatMap((calendar) =>
+          calendar.identifier ? [calendar.identifier.value] : [],
+        ),
+      );
+      unavailableExistingCalendarIds = preset.calendarIds.filter(
+        (calendarId) => !availableCalendarIds.has(calendarId),
+      );
+      safeCalendarIds = [
+        ...new Set([
+          ...calendarIdResult.calendarIds,
+          ...unavailableExistingCalendarIds,
+        ]),
+      ];
+    }
 
     const updatedPreset = await updatePresetCalendarIds(
       preset.id,
@@ -314,14 +326,25 @@ async function openSaveForm(): Promise<void> {
   closeManagementPanel();
   saveError.value = null;
 
-  const currentCalendars = await loadCalendars();
-  if (!currentCalendars) return;
-  if (currentCalendars.length === 0) {
-    saveError.value = 'カレンダーを取得できないため、保存できません。';
-    return;
+  const knownCalendarIds = getKnownSelectedCalendarIds();
+  if (knownCalendarIds) {
+    calendarIdSnapshot.value = knownCalendarIds;
+  } else {
+    const currentCalendars = await loadCalendars();
+    if (!currentCalendars) return;
+    if (currentCalendars.length === 0) {
+      saveError.value = 'カレンダーを取得できないため、保存できません。';
+      return;
+    }
+
+    const calendarIdResult = getComparableCalendarIds(currentCalendars);
+    if (!calendarIdResult.ok) {
+      saveError.value = `${calendarIdResult.error} プリセットを保存できません。`;
+      return;
+    }
+    calendarIdSnapshot.value = calendarIdResult.calendarIds;
   }
 
-  calendarSnapshot.value = currentCalendars;
   presetName.value = '';
   isSaveFormOpen.value = true;
   await nextTick();
@@ -332,7 +355,7 @@ function closeSaveForm(): void {
   isSaveFormOpen.value = false;
   presetName.value = '';
   saveError.value = null;
-  calendarSnapshot.value = [];
+  calendarIdSnapshot.value = null;
 }
 
 async function saveCurrentPreset(): Promise<void> {
@@ -349,9 +372,8 @@ async function saveCurrentPreset(): Promise<void> {
     return;
   }
 
-  const calendarIdResult = getComparableCalendarIds(calendarSnapshot.value);
-  if (!calendarIdResult.ok) {
-    saveError.value = `${calendarIdResult.error} プリセットを保存できません。`;
+  if (!calendarIdSnapshot.value) {
+    saveError.value = '現在のカレンダー構成を取得できません。';
     return;
   }
 
@@ -360,7 +382,7 @@ async function saveCurrentPreset(): Promise<void> {
   try {
     const preset = await createPreset(
       normalizedName,
-      calendarIdResult.calendarIds,
+      calendarIdSnapshot.value,
     );
     presets.value.push(preset);
     await setSelectedPresetId(preset.id);
