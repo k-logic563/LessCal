@@ -5,6 +5,8 @@ defineProps<{
   isSelected: boolean;
   disabled?: boolean;
   menuOpen: boolean;
+  isDragging?: boolean;
+  dropPosition?: 'before' | 'after' | null;
 }>();
 
 const emit = defineEmits<{
@@ -13,11 +15,40 @@ const emit = defineEmits<{
   rename: [];
   updateFromCurrent: [];
   delete: [];
+  dragStart: [event: DragEvent];
+  dragOver: [event: DragEvent];
+  dragLeave: [event: DragEvent];
+  drop: [event: DragEvent];
+  dragEnd: [];
 }>();
 </script>
 
 <template>
-  <li class="preset" :class="{ 'preset--selected': isSelected }">
+  <li
+    class="preset"
+    :class="{
+      'preset--selected': isSelected,
+      'preset--dragging': isDragging,
+      'preset--drop-before': dropPosition === 'before',
+      'preset--drop-after': dropPosition === 'after',
+    }"
+    @dragover="emit('dragOver', $event)"
+    @dragleave="emit('dragLeave', $event)"
+    @drop="emit('drop', $event)"
+  >
+    <button
+      class="preset__drag-handle"
+      type="button"
+      draggable="true"
+      :aria-label="`${name}を並び替え`"
+      :disabled="disabled"
+      @click.stop
+      @dragstart.stop="emit('dragStart', $event)"
+      @dragend.stop="emit('dragEnd')"
+    >
+      <span aria-hidden="true">⋮⋮</span>
+    </button>
+
     <button
       class="preset__name"
       type="button"
@@ -77,10 +108,76 @@ const emit = defineEmits<{
   align-items: center;
   min-height: 42px;
   border-radius: 7px;
+  transition:
+    transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 180ms ease,
+    opacity 180ms ease,
+    background-color 180ms ease;
 }
 
 .preset--selected {
   background: #eef3fc;
+}
+
+.preset--dragging {
+  z-index: 2;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgb(60 64 67 / 18%);
+  opacity: 0.78;
+  transform: scale(1.018);
+}
+
+.preset--drop-before {
+  transform: translateY(4px);
+}
+
+.preset--drop-after {
+  transform: translateY(-4px);
+}
+
+.preset--drop-before::before,
+.preset--drop-after::after {
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: #a8c7fa;
+  content: "";
+}
+
+.preset--drop-before::before {
+  top: -3px;
+}
+
+.preset--drop-after::after {
+  bottom: -3px;
+}
+
+.preset__drag-handle {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  width: 26px;
+  padding: 0;
+  border: 0;
+  color: #9aa0a6;
+  background: transparent;
+  font-size: 12px;
+  letter-spacing: -3px;
+  cursor: grab;
+}
+
+.preset__drag-handle:active {
+  cursor: grabbing;
+}
+
+.preset--dragging .preset__drag-handle {
+  cursor: grabbing;
+}
+
+.preset__drag-handle:disabled {
+  cursor: default;
 }
 
 .preset__name {
@@ -141,6 +238,7 @@ const emit = defineEmits<{
 }
 
 .preset__name:focus-visible,
+.preset__drag-handle:focus-visible,
 .preset__menu:focus-visible {
   outline: 2px solid #1a73e8;
   outline-offset: -2px;
@@ -184,5 +282,11 @@ const emit = defineEmits<{
 .preset:not(.preset--selected):hover,
 .preset__menu:hover {
   background: #f5f6f7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preset {
+    transition-duration: 1ms;
+  }
 }
 </style>

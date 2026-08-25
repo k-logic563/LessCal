@@ -8,6 +8,7 @@ import {
   getPresets,
   PresetValidationError,
   renamePreset,
+  reorderPresets,
   updatePresetCalendarIds,
 } from './services/presetService';
 import {
@@ -24,8 +25,11 @@ import {
   type GetCalendarsResponse,
 } from './shared/calendarMessaging';
 import type { CalendarPreset } from './types/calendarPreset';
+import { isGoogleCalendarUrl } from './utils/googleCalendarUrl';
 import { getComparableCalendarIds } from './utils/presetMatcher';
 
+const hasCheckedActivePage = ref(false);
+const isGoogleCalendarPage = ref(false);
 const presets = ref<CalendarPreset[]>([]);
 const isLoadingCalendars = ref(false);
 const presetListError = ref<string | null>(null);
@@ -41,6 +45,9 @@ const managedPreset = ref<CalendarPreset | null>(null);
 const renameName = ref('');
 const managementError = ref<string | null>(null);
 const renameInput = ref<HTMLInputElement | null>(null);
+const draggingPresetId = ref<string | null>(null);
+const dragOverPresetId = ref<string | null>(null);
+const dragOverPosition = ref<'before' | 'after' | null>(null);
 
 const isSaveFormOpen = ref(false);
 const isSaving = ref(false);
@@ -321,6 +328,97 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
   }
 }
 
+function startPresetDrag(presetId: string, event: DragEvent): void {
+  if (applyingPresetId.value || managingPresetId.value || managementMode.value) {
+    event.preventDefault();
+    return;
+  }
+
+  activeMenuPresetId.value = null;
+  draggingPresetId.value = presetId;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', presetId);
+    const presetRow = (event.currentTarget as HTMLElement | null)?.closest(
+      '.preset',
+    );
+    if (presetRow instanceof HTMLElement) {
+      event.dataTransfer.setDragImage(presetRow, 16, presetRow.offsetHeight / 2);
+    }
+  }
+}
+
+function allowPresetDrop(targetPresetId: string, event: DragEvent): void {
+  if (!draggingPresetId.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+
+  const sourceIndex = presets.value.findIndex(
+    (preset) => preset.id === draggingPresetId.value,
+  );
+  const targetIndex = presets.value.findIndex(
+    (preset) => preset.id === targetPresetId,
+  );
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+    dragOverPresetId.value = null;
+    dragOverPosition.value = null;
+    return;
+  }
+
+  dragOverPresetId.value = targetPresetId;
+  dragOverPosition.value = sourceIndex < targetIndex ? 'after' : 'before';
+}
+
+function leavePresetDrop(targetPresetId: string, event: DragEvent): void {
+  const nextTarget = event.relatedTarget;
+  if (
+    nextTarget instanceof Node &&
+    event.currentTarget instanceof HTMLElement &&
+    event.currentTarget.contains(nextTarget)
+  ) {
+    return;
+  }
+  if (dragOverPresetId.value === targetPresetId) {
+    dragOverPresetId.value = null;
+    dragOverPosition.value = null;
+  }
+}
+
+function finishPresetDrag(): void {
+  draggingPresetId.value = null;
+  dragOverPresetId.value = null;
+  dragOverPosition.value = null;
+}
+
+async function dropPreset(targetPresetId: string, event: DragEvent): Promise<void> {
+  event.preventDefault();
+  const sourcePresetId = draggingPresetId.value;
+  finishPresetDrag();
+  if (!sourcePresetId || sourcePresetId === targetPresetId) return;
+
+  const sourceIndex = presets.value.findIndex(
+    (preset) => preset.id === sourcePresetId,
+  );
+  const targetIndex = presets.value.findIndex(
+    (preset) => preset.id === targetPresetId,
+  );
+  if (sourceIndex === -1 || targetIndex === -1) return;
+
+  const previousPresets = [...presets.value];
+  const reordered = [...presets.value];
+  const [movedPreset] = reordered.splice(sourceIndex, 1);
+  reordered.splice(targetIndex, 0, movedPreset);
+  presets.value = reordered;
+  presetListError.value = null;
+
+  try {
+    await reorderPresets(reordered.map((preset) => preset.id));
+  } catch {
+    presets.value = previousPresets;
+    presetListError.value = 'プリセットの並び順を保存できませんでした。';
+  }
+}
+
 async function openSaveForm(): Promise<void> {
   activeMenuPresetId.value = null;
   closeManagementPanel();
@@ -399,6 +497,18 @@ async function saveCurrentPreset(): Promise<void> {
 }
 
 onMounted(async () => {
+  try {
+    const [activeTab] = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    isGoogleCalendarPage.value = isGoogleCalendarUrl(activeTab?.url);
+  } finally {
+    hasCheckedActivePage.value = true;
+  }
+
+  if (!isGoogleCalendarPage.value) return;
+
   stopObservingSelectedPreset = observeSelectedPresetId((presetId) => {
     selectedPresetId.value = presetId;
     hasLoadedSelectedPreset.value = true;
@@ -432,7 +542,17 @@ onUnmounted(() => {
     @click="activeMenuPresetId = null"
     @keydown.esc="activeMenuPresetId = null"
   >
-    <h1 class="popup__title">表示プリセット</h1>
+    <p v-if="!hasCheckedActivePage" class="page-status" aria-live="polite">
+      確認中…
+    </p>
+
+    <section v-else-if="!isGoogleCalendarPage" class="unavailable-page">
+      <h1>Googleカレンダーでのみ利用できます</h1>
+      <p>Googleカレンダーを開いてからLessCalをご利用ください。</p>
+    </section>
+
+    <template v-else>
+      <h1 class="popup__title">LessCal</h1>
 
     <p v-if="isCustomState" class="current-state">
       現在：<strong>カスタム</strong>
@@ -444,7 +564,13 @@ onUnmounted(() => {
     <p v-else-if="presets.length === 0" class="preset-empty">
       保存済みのプリセットはありません。
     </p>
-    <ul v-else class="preset-list" aria-label="プリセット一覧">
+    <TransitionGroup
+      v-else
+      name="preset-list"
+      tag="ul"
+      class="preset-list"
+      aria-label="プリセット一覧"
+    >
       <PresetListItem
         v-for="preset in presets"
         :key="preset.id"
@@ -453,13 +579,22 @@ onUnmounted(() => {
         :is-selected="selectedPresetId === preset.id"
         :disabled="applyingPresetId !== null || managingPresetId !== null || managementMode !== null"
         :menu-open="activeMenuPresetId === preset.id"
+        :is-dragging="draggingPresetId === preset.id"
+        :drop-position="
+          dragOverPresetId === preset.id ? dragOverPosition : null
+        "
         @select="applyPreset(preset)"
         @toggle-menu="togglePresetMenu(preset.id)"
         @rename="openRenameForm(preset)"
         @update-from-current="updatePresetFromCurrent(preset)"
         @delete="openDeleteConfirmation(preset)"
+        @drag-start="startPresetDrag(preset.id, $event)"
+        @drag-over="allowPresetDrop(preset.id, $event)"
+        @drag-leave="leavePresetDrop(preset.id, $event)"
+        @drop="dropPreset(preset.id, $event)"
+        @drag-end="finishPresetDrag"
       />
-    </ul>
+    </TransitionGroup>
     <p v-if="applyError" class="status status--error" role="alert">
       {{ applyError }}
     </p>
@@ -563,6 +698,7 @@ onUnmounted(() => {
         現在の表示を保存
       </button>
     </div>
+    </template>
   </main>
 </template>
 
@@ -597,6 +733,30 @@ onUnmounted(() => {
   line-height: 1.4;
 }
 
+.page-status,
+.unavailable-page {
+  margin: 0;
+  color: #5f6368;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.unavailable-page {
+  padding: 22px 8px;
+}
+
+.unavailable-page h1 {
+  margin: 0 0 7px;
+  color: #3c4043;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.unavailable-page p {
+  margin: 0;
+}
+
 .current-state {
   margin: -4px 0 10px;
   color: #5f6368;
@@ -614,6 +774,16 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.preset-list-move {
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preset-list-move {
+    transition-duration: 1ms;
+  }
 }
 
 .preset-empty {

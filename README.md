@@ -1,6 +1,6 @@
-# Calendar Presets
+# LessCal
 
-Googleカレンダーで表示するメンバーの組み合わせをプリセットとして保存し、Chrome拡張機能のPopupから切り替えるためのプロジェクトです。
+LessCalは、Googleカレンダーで表示するメンバーの組み合わせをプリセットとして保存し、Chrome拡張機能のPopupから切り替えるためのプロジェクトです。
 
 Googleカレンダー本体にはUIを追加せず、既存のカレンダー一覧とチェック状態を利用します。プリセットはChrome Storageへ保存され、外部サーバーへ送信されません。
 
@@ -15,6 +15,7 @@ Googleカレンダー本体にはUIを追加せず、既存のカレンダー一
 - プリセット名の変更
 - 現在の表示状態によるプリセット更新
 - プリセットの削除
+- ドラッグ＆ドロップによるプリセットの並び替え
 - 現在の表示状態と一致するプリセットの表示
 - 一致するプリセットがない場合の「カスタム」表示
 
@@ -186,3 +187,11 @@ Content Scriptを更新した場合は、拡張機能だけでなくGoogleカレ
 - スプレッドシート連携
 
 これらはMVPの対象外です。将来機能を追加する場合も、詳細仕様は [`docs/requirements.md`](docs/requirements.md) を基準に更新します。
+
+## プライバシーポリシー
+
+プライバシーポリシーは [`privacy/index.html`](privacy/index.html) で管理し、GitHub Pagesで公開します。
+
+現在のGitHubリポジトリ名に基づく公開URL：
+
+<https://k-logic563.github.io/google-calendar-preset-extention-app/>

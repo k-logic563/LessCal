@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Chrome拡張機能LessCalのプライバシーポリシー"
+    />
+    <title>プライバシーポリシー | LessCal</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP",
+          sans-serif;
+        color: #202124;
+        background: #f8fafd;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        width: min(760px, calc(100% - 32px));
+        margin: 40px auto;
+        padding: 32px;
+        border: 1px solid #e3e8ef;
+        border-radius: 14px;
+        background: #fff;
+        box-shadow: 0 8px 28px rgb(60 64 67 / 8%);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        color: #174ea6;
+        font-size: 28px;
+      }
+
+      h2 {
+        margin: 32px 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #e3e8ef;
+        font-size: 19px;
+      }
+
+      p,
+      li {
+        line-height: 1.8;
+      }
+
+      ul {
+        padding-left: 24px;
+      }
+
+      .subtitle,
+      .updated {
+        color: #5f6368;
+      }
+
+      .updated {
+        margin: 0 0 28px;
+        font-size: 14px;
+      }
+
+      @media (max-width: 600px) {
+        main {
+          width: auto;
+          margin: 0;
+          padding: 24px 20px 40px;
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LessCal プライバシーポリシー</h1>
+      <p class="subtitle">
+        LessCalは、Googleカレンダーの表示構成をプリセットとして保存し、簡単に切り替えるためのChrome拡張機能です。
+      </p>
+      <p class="updated">最終更新日：2026年8月25日</p>
+
+      <h2>1. LessCalが処理する情報</h2>
+      <p>LessCalは機能提供のため、次の情報をブラウザ内で処理します。</p>
+      <ul>
+        <li>Googleカレンダー上のカレンダー表示名</li>
+        <li>カレンダー識別情報（GoogleカレンダーのDOM上のdata-id）</li>
+        <li>各カレンダーのON／OFF状態</li>
+        <li>ユーザーが入力したプリセット名</li>
+        <li>プリセットに含まれるカレンダー識別情報</li>
+        <li>プリセットの表示順などの設定情報</li>
+      </ul>
+
+      <h2>2. 利用目的</h2>
+      <p>処理する情報は、次のLessCal機能を提供する目的にのみ使用します。</p>
+      <ul>
+        <li>Googleカレンダーの現在の表示構成をプリセットとして保存すること</li>
+        <li>現在の表示構成と保存済みプリセットが一致するか判定すること</li>
+        <li>保存済みプリセットへ表示を切り替えること</li>
+        <li>保存済みプリセットを現在の表示構成で更新すること</li>
+        <li>プリセットの表示順を保持すること</li>
+      </ul>
+
+      <h2>3. 保存場所と保持期間</h2>
+      <p>
+        プリセット名、プリセットに含まれるカレンダー識別情報、作成・更新日時、表示順はChrome Storageへ保存され、ユーザーのブラウザ内で保持されます。開発者が管理する外部データベースには保存しません。
+      </p>
+      <p>
+        保存した情報は、ユーザーが削除するかLessCalをアンインストールするまで保持されます。
+      </p>
+
+      <h2>4. 外部送信・第三者提供</h2>
+      <p>LessCalが処理する情報について、次の行為は行いません。</p>
+      <ul>
+        <li>開発者が管理する外部サーバーへの送信</li>
+        <li>第三者への提供または販売</li>
+        <li>広告またはマーケティング目的での利用</li>
+        <li>アクセス解析、利用分析またはトラッキング目的での利用</li>
+      </ul>
+
+      <h2>5. データの削除</h2>
+      <p>
+        個別のプリセットは、LessCalのPopupにある削除操作から削除できます。LessCalをChromeからアンインストールすることで、拡張機能がChrome Storageへ保存したデータを削除できます。開発者側ではユーザーデータを保存していないため、開発者へ削除を依頼する必要はありません。
+      </p>
+
+      <h2>6. Limited Use</h2>
+      <p>
+        LessCalが取得または処理するユーザーデータは、LessCalの単一用途であるGoogleカレンダー表示プリセット機能の提供にのみ使用します。それ以外の目的で使用、転送または共有しません。
+      </p>
+
+      <h2>7. 使用しない技術・サービス</h2>
+      <p>LessCalは次の技術・サービスを使用しません。</p>
+      <ul>
+        <li>Google Calendar API</li>
+        <li>Google Workspace API</li>
+        <li>OAuth認証</li>
+        <li>外部から取得して実行するリモートコード</li>
+        <li>GA4などのAnalytics、Cookieまたはトラッキング</li>
+      </ul>
+
+      <h2>8. Googleカレンダーへのアクセス</h2>
+      <p>
+        LessCalはGoogleカレンダーのページ上でのみ動作し、表示プリセット機能に必要な範囲でページ内のカレンダー一覧とON／OFF状態を読み取り、ユーザーが選択したプリセットを適用します。
+      </p>
+
+      <h2>9. 改定</h2>
+      <p>
+        本ポリシーを改定する場合は、このページで改定内容と更新日を公開します。
+      </p>
+    </main>
+  </body>
+</html>

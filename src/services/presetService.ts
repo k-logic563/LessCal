@@ -126,3 +126,25 @@ export async function deletePreset(presetId: string): Promise<void> {
     [STORAGE_KEY]: remainingPresets,
   });
 }
+
+export async function reorderPresets(orderedPresetIds: string[]): Promise<void> {
+  const presets = await getPresets();
+  const uniqueIds = new Set(orderedPresetIds);
+
+  if (
+    uniqueIds.size !== orderedPresetIds.length ||
+    orderedPresetIds.length !== presets.length ||
+    presets.some((preset) => !uniqueIds.has(preset.id))
+  ) {
+    throw new PresetValidationError('プリセットの並び順が不正です。');
+  }
+
+  const presetsById = new Map(presets.map((preset) => [preset.id, preset]));
+  const reorderedPresets = orderedPresetIds.map(
+    (presetId) => presetsById.get(presetId)!,
+  );
+
+  await browser.storage.local.set({
+    [STORAGE_KEY]: reorderedPresets,
+  });
+}

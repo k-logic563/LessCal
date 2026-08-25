@@ -90,7 +90,7 @@ Popupには動作確認用の簡単な表示のみ設置する。
 例：
 
 ```text
-Calendar Presets
+LessCal
 
 Extension loaded successfully.
 ```
