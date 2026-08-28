@@ -24,6 +24,7 @@ import {
   type CalendarDomItem,
   type GetCalendarsResponse,
 } from './shared/calendarMessaging';
+import { sendCalendarTabMessage } from './shared/calendarTabMessaging';
 import type { CalendarPreset } from './types/calendarPreset';
 import { isGoogleCalendarUrl } from './utils/googleCalendarUrl';
 import { getComparableCalendarIds } from './utils/presetMatcher';
@@ -85,14 +86,13 @@ async function loadCalendars(): Promise<CalendarDomItem[] | null> {
       currentWindow: true,
     });
 
-    if (activeTab.id === undefined) {
-      throw new Error('Active tab is unavailable');
-    }
-
-    const response = (await browser.tabs.sendMessage(activeTab.id, {
-      type: GET_CALENDARS_MESSAGE,
-      allowScroll: true,
-    })) as GetCalendarsResponse | undefined;
+    const response = await sendCalendarTabMessage<GetCalendarsResponse>(
+      activeTab,
+      {
+        type: GET_CALENDARS_MESSAGE,
+        allowScroll: true,
+      },
+    );
 
     if (!response) {
       throw new Error('Content Scriptから応答がありません。');
@@ -294,15 +294,14 @@ async function applyPreset(preset: CalendarPreset): Promise<void> {
       currentWindow: true,
     });
 
-    if (activeTab.id === undefined) {
-      throw new Error('Active tab is unavailable');
-    }
-
-    const response = (await browser.tabs.sendMessage(activeTab.id, {
-      type: APPLY_CALENDAR_PRESET_MESSAGE,
-      presetId: preset.id,
-      calendarIds: preset.calendarIds,
-    })) as ApplyCalendarPresetResponse | undefined;
+    const response = await sendCalendarTabMessage<ApplyCalendarPresetResponse>(
+      activeTab,
+      {
+        type: APPLY_CALENDAR_PRESET_MESSAGE,
+        presetId: preset.id,
+        calendarIds: preset.calendarIds,
+      },
+    );
 
     if (!response) {
       throw new Error('Content Scriptから応答がありません。');

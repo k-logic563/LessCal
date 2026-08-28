@@ -5,7 +5,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
   manifest: {
     name: 'LessCal',
-    version: '0.2.2',
+    version: '0.2.3',
     description:
       'Googleカレンダーの表示メンバー構成をプリセットとして保存し、簡単に切り替えられるChrome拡張機能です。',
     icons: {
@@ -22,7 +22,7 @@ export default defineConfig({
         48: 'icon/48.png',
       },
     },
-    permissions: ['storage', 'activeTab'],
+    permissions: ['storage', 'activeTab', 'scripting'],
   },
   runner: {
     disabled: true,
